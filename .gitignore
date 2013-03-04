@@ -4,4 +4,5 @@
 *~
 *.sqlite
 *.swp
+*.old
 
