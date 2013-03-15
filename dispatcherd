@@ -18,6 +18,7 @@ import threading
 import logging
 import json
 import re
+import urlparse
 
 try:
     import httplib2
@@ -36,7 +37,7 @@ import socket
 from eventlet.green import urllib2
 from datetime import date
 from threading import Thread, Event
-from urllib import urlencode,urlopen
+from urllib import urlencode, urlopen
 
 logging.basicConfig(level=logging.DEBUG,
         format='%(asctime)s [%(process)d] %(levelname)-4s:  %(message)s',
@@ -47,10 +48,10 @@ logging.basicConfig(level=logging.DEBUG,
 # Lets save pid in pidfile
 PIDFILE = "/var/tmp/dispatcher.pid"
 PID = str(os.getpid())
-print "Current PID is:%s"%PID
+print "Current PID is:%s" % PID
 if os.path.isfile(PIDFILE):
     print "%s already exists, exiting" % PIDFILE
-    pidx = file(PIDFILE,'r').read().strip()
+    pidx = file(PIDFILE, 'r').read().strip()
     if len(pidx) > 0:
         is_runing = os.popen("ps up %s | grep -v '^USER'|awk '{print $2}'"%pidx).read().strip()
         print is_runing
@@ -60,7 +61,7 @@ if os.path.isfile(PIDFILE):
         else:
             file(PIDFILE, 'w').write(PID)
 else:
-    print "Dispatcher started with PID:%s"%PID
+    print "Dispatcher started with PID:%s" % PID
     file(PIDFILE, 'w').write(PID)
 
 # Default Configurations
@@ -78,16 +79,17 @@ defaults = {
         'max_num_threads': 5,
         'lang': 'en',
         'country_code':'256',
-        'prefix_backends': {"75":"zain", "71":"dmark", "78":"dmark", "77":"dmark", "79":"dmark"},
+        'prefix_backends': {"75":"zain", "71":"dmark", "78":"dmark", "77":"dmark", "79":"dmark", "70":"dmark"},
+        'default_backend':'dmark'
         }
 
 lang_strings = {}
 
 # Helpers
 def default(*args):
-    p = [i for i in args if i or i==0]
+    p = [i for i in args if i or i == 0]
     if p.__len__(): return p[0]
-    if args.__len__(): return args[args.__len__()-1]
+    if args.__len__(): return args[args.__len__() - 1]
     return None
 
 
@@ -100,7 +102,7 @@ def myReadConf(fname):
         if not l: continue
         if l[0] == '#' or l.find(splitchar) < 0:
             continue # a comment
-        k,v = l.strip().split(splitchar,1)
+        k, v = l.strip().split(splitchar, 1)
         if not k or not v:
             continue # skip over bad ones
         cfgx[k.lower().strip()] = v.strip()
@@ -124,9 +126,9 @@ except IOError, e:
 def normalize(num):
     """return internation format of a given phone number"""
     cc = cfg.get("country_code","256")
-    x = '%s'%num
+    x = '%s' % num
     if x.startswith('0'):
-        x="%s"%cc + x[1:]
+        x = "%s" % cc + x[1:]
         return x
     return x.replace('+','')
 
@@ -134,13 +136,13 @@ def checknum(num):
     """Check validity of a phone number"""
     if len(num) < 9:
         return False
-    if re.match(r'(^\+)?\d{,14}$','%s'%num):
+    if re.match(r'(^\+)?\d{,14}$','%s' % num):
         return True
     return False
 
 def localize(num):
     """Returns phone number in local format"""
-    x = '%s'%num
+    x = '%s' % num
     if x.startswith('0'): return x
     cc = cfg.get("country_code","256")
     x = x.replace('+','')
@@ -150,14 +152,14 @@ def localize(num):
 def eliminator_international(l):
     """Given a list of phone numbers, 
     returns a list in international format but with one occurance for each"""
-    n = list(set(filter(checknum,l)))
-    return list(set(map(normalize,n)))
+    n = list(set(filter(checknum, l)))
+    return list(set(map(normalize, n)))
 
 def eliminator_local(l):
     """Given a list of phone numbers, 
     returns a list in local format but with one occurance for each"""
-    n = list(set(filter(checknum,l)))
-    return list(set(map(localize,n)))
+    n = list(set(filter(checknum, l)))
+    return list(set(map(localize, n)))
 
 
 def is_airtel_num(num):
@@ -173,13 +175,13 @@ def get_backend(num):
     returns required backend/smsc to use for such a number"""
     cc = cfg.get("country_code","256")
     prefix = num[len(cc):len(cc)+2]
-    for k,v in cfg['prefix_backends'].iteritems():
+    for k, v in cfg['prefix_backends'].iteritems():
         if prefix == k: 
             return v
     return cfg.get('default_backend','fake')
 
 def sendsms(frm, to, msg, smsc):
-    params = {'smsc':smsc, 'from':frm,'to': ' '.join(to),'text':msg}
+    params = {'smsc':smsc, 'from':frm, 'to': ' '.join(to), 'text':msg}
     surl = cfg['send-sms-url']
     if surl.find('?') < 0:
         c = '?'
@@ -189,19 +191,19 @@ def sendsms(frm, to, msg, smsc):
     return s.readlines()
 
 def querystring_to_dict(qstr):
-    try:
-        return dict([x.split('=') for x in qstr.split('&')])
-    except:
-        return {}
+    ret = urlparse.parse_qs(qstr)
+    for k in ret.keys():
+        ret[k] = ''.join(ret[k])
+    return ret
 
 def lit(**keywords):
     return keywords
 
-def missing_param(param_list,params):
+def missing_param(param_list, params):
     s = ""
     for i in param_list:
         if not params.has_key(i):
-            s += "%s, "%i
+            s += "%s, " % i
     return s
 
 def read_url(url):
@@ -258,7 +260,7 @@ class url_dispatcher_config:
     topup_id = 0
     transfer_id = 0
 
-    def __init__(self,cur):
+    def __init__(self, cur):
         global cfg, lang_strings
         cur.execute("SELECT * FROM misc")
         res = cur.fetchall()
@@ -281,23 +283,21 @@ import pprint
 pp = pprint.PrettyPrinter(indent=4)
 pp.pprint(cfg)
 
-def _rts(name=None,deftext=""):
+def _rts(name=None, deftext=""):
     global lang_strings
     if lang_strings.has_key(name):
-        return default(lang_strings[name],deftext)
+        return default(lang_strings[name], deftext)
     return deftext
 
 # End Helpers
 def do_unknown(req):
-    strx ="""Unknown request::: %s"""%req
-    #return "Unknown request:- %s===%s\n"%(req,dispatcher_conf.max_num_threads)
+    strx ="""Unknown request::: %s""" % req
     return strx
 
 def testing(req):
-    print "handling this request->",req
     return ""
 
-def dhis2_smsinput(args=[None,0,'','']):
+def dhis2_smsinput(args=[None, 0, '', '']):
     conn = args[0]
     cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
 
@@ -309,10 +309,9 @@ def dhis2_smsinput(args=[None,0,'','']):
         d = querystring_to_dict(query_string)
     else:
         cur.execute("""UPDATE request_queue SET status = 'failed', \
-                ldate = current_timestamp WHERE id = %s"""%xid)
+                ldate = current_timestamp WHERE id = %s""" % xid)
         conn.commit()
-        print "Wolokoso"
-        logging.error("Request [%s] body for /dhis2_smsinput is empty"%xid)
+        logging.error("Request [%s] body for /dhis2_smsinput is empty" % xid)
         return None
 
     smsinput_url = cfg['dhis2-smsinput-url']
@@ -330,9 +329,9 @@ def dhis2_smsinput(args=[None,0,'','']):
         except:
             pass
         cur.execute("UPDATE request_queue SET status = 'completed', "
-                "ldate = current_timestamp, statuscode = '%s' WHERE id = %s"%('0200',xid))
+                "ldate = current_timestamp, statuscode = '%s' WHERE id = %s"%('0200', xid))
         conn.commit()
-        logging.debug("%s URL successfully called [id: %s]"%('/dhis2_smsinput',xid))
+        logging.debug("%s URL successfully called [id: %s]"%('/dhis2_smsinput', xid))
     return "URL dispatched"
 
 def queue_request(arg):
@@ -345,16 +344,16 @@ def queue_request(arg):
         cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
 
         sql = """INSERT INTO request_queue (msisdn,req_path,req_body) \
-                VALUES('%s','%s','%s') RETURNING id"""%(msisdn,req,qstr)
+                VALUES('%s','%s','%s') RETURNING id""" % (msisdn, req, qstr)
         cur.execute(sql)
         res = cur.fetchone()
         conn.commit()
         cp.put(conn)
-        logging.debug("Queued %s Request from %s with id %s"%(req,msisdn,res['id']))
-        return "%s %s"%(_rts('E_REQUEST_QUEUED', \
+        logging.debug("Queued %s Request from %s with id %s" % (req, msisdn, res['id']))
+        return "%s %s" % (_rts('E_REQUEST_QUEUED', \
                 'Request queued with ID'),res['id'])
     else:
-        logging.error("%s Request from %s with no cgi variables"%(req,msisdn))
+        logging.error("%s Request from %s with no cgi variables" % (req, msisdn))
         return "Notice: No Parameters passed"
 
 def handle_sms_json(arg):
@@ -364,9 +363,9 @@ def handle_sms_json(arg):
     except:
         # we do not have proper JSON
         return "Failed: JOSN not well formatted"
-    username = data.get('username','')
-    passwd = data.get('password','')
-    text = data.get('text','')
+    username = data.get('username', '')
+    passwd = data.get('password', '')
+    text = data.get('text', '')
     recipients = data.get('recipients', [])
     #print "Username: %s, Password: %s, Text: %s, Recipients: %s " %(username,passwd, text, recipients)
     #recipient_backend_map = {'dmark':[], 'zain':[], 'yo':[]}
@@ -402,7 +401,7 @@ def handle_sms(arg):
         # we have all parameters and we can try to send now
         cur.execute("""SELECT id, transaction_limit, \
 						(crypt('%s',password)=password ) AS is_correct FROM \
-						thirdparty_users WHERE username='%s' FOR UPDATE"""%(password, username))
+						thirdparty_users WHERE username='%s'""" % (password, username))
         res = cur.fetchone()
         is_valid = res['is_correct'] if res else False
         if not is_valid:
@@ -410,31 +409,31 @@ def handle_sms(arg):
 
         recipient = normalize(msisdn) if checknum(msisdn) else ''
         if not recipient:
-            logging.error("Could not process request . Invalid recipient:[%s]"%msisdn)
+            logging.error("Could not process request . Invalid recipient:[%s]" % msisdn)
             return "Failed: Invalid recipient"
         smsc = get_backend(recipient)
         _from = cfg.get('default_sender', '6767')
-        print "MSISDN[:%s] TEXT[:%s] SMSC[:%s] USER[:%s] PASS[:%s]"%(recipient, text, smsc, username, password)
-        print sendsms(_from, [recipient], text, smsc)
+        #print "MSISDN[:%s] TEXT[:%s] SMSC[:%s] USER[:%s] PASS[:%s]" % (recipient, text, smsc, username, password)
+        sendsms(_from, [recipient], text, smsc)
         logging.debug('Sent SMS [SMSC:%s] [USER:%s] [FROM:%s] [TO:%s] [MSG:%s]'%(smsc, 
             username, _from, recipient, text ))
         #log this to audit_logs
-        tup = lit(userid=res['id'], recipient_count=1, backend=smsc, text=text)
-        cur.execute("""INSERT INTO message_log(userid, text, recipient_count, backend) \
-                VALUES('%(userid)s', '%(text)s', %(recipient_count)d, '%(backend)s')"""%tup)
+        tup = lit(userid=res['id'], recipient_count=1, backend=smsc, text=text.replace("'","\'"), recipient=recipient)
+        cur.execute("""INSERT INTO message_log(userid, text, recipient_count, backend, recipient) \
+                VALUES('%(userid)s', E'%(text)s', %(recipient_count)d, '%(backend)s', '%(recipient)s')""" % tup)
 
         tup = lit(remote_ip='::1', audit_identity='%s'%res['id'], \
                 action='SendSMS', detail= \
                 'Sent message from %s to %s'%(_from, recipient))
         cur.execute("""INSERT INTO audit_logs(remote_ip, audit_identity, \
                 action, detail) VALUES('%(remote_ip)s' ,'%(audit_identity)s', \
-                '%(action)s','%(detail)s')"""%tup)
+                '%(action)s','%(detail)s')""" % tup)
         conn.commit()
 
     else:
         plist = ['username', 'password', 'sender', 'text']
-        mparams = missing_param(plist,d)
-        logging.error("Could not process request . Missing mandatory parameter(s) "%mparams)
+        mparams = missing_param(plist, d)
+        logging.error("Could not process request . Missing mandatory parameter(%s) " % mparams)
         cp.put(conn)
         return "Failed: Missing Parameter"
 
@@ -447,7 +446,8 @@ handler = {
         "/dhis2_smsinput":queue_request,
         #"/testing": queue_request,
         #"/gw-json": handle_sms_json,
-        "/gw": handle_sms
+        #"/gw": handle_sms,
+        "/gw": queue_request
         }
 
 queueHandler = {
@@ -459,11 +459,11 @@ queueHandler = {
 def app(environ, start_response):
     method = environ['REQUEST_METHOD']
     if method not in ['GET', 'POST']:
-        start_response('403 Forbidden',[('Content-type','text/plain')])
-        strx ="""Unsupported Method %s"""% \
+        start_response('403 Forbidden', [('Content-type','text/plain')])
+        strx = """Unsupported Method %s""" % \
                 (environ['REQUEST_METHOD'])
         return '\n'.join([strx])
-    #print environ
+    print environ
     print environ.get('CONTENT_LENGTH', '0')
     if method == 'POST':
         data = environ['wsgi.input'].read()
@@ -481,19 +481,19 @@ def app(environ, start_response):
             msisdn = qdict['sender']
 
     reqp = environ['PATH_INFO']
-    print "request %s"%reqp
+    print "request %s" % reqp
     #qstr = request body
     #pile.spawn(handler.get(environ['PATH_INFO'],do_unknown),qstr)
     if handler.has_key(reqp):
-        pile.spawn(handler.get(reqp),[reqp, qstr, msisdn, data])
+        pile.spawn(handler.get(reqp), [reqp, qstr, msisdn, data])
     else:
         #pile.spawn(do_unknown,reqp)
-        start_response('404 Not Found',[('Content-type','text/plain')])
-        strx ="""Unknown request: %s"""%reqp
+        start_response('404 Not Found', [('Content-type','text/plain')])
+        strx = """Unknown request: %s""" % reqp
         return '\n'.join([strx])
 
     res = '\n'.join(pile)
-    start_response('200 OK',[('Content-type','text/plain')])
+    start_response('200 OK', [('Content-type','text/plain')])
     return [res]
 
 req_list = Queue.Queue(10)
@@ -502,7 +502,7 @@ qstop = 0
 
 class RequestRun(Thread):
     """Consumer Thread Class"""
-    def __init__(self,args=[]):
+    def __init__(self, args=[]):
         Thread.__init__(self)
         self.args = args
     def run(self):
@@ -514,7 +514,7 @@ class RequestRun(Thread):
             try:
                 qid = req_list.get()
                 #print "gwe--- id===>",id
-                cur.execute("SELECT msisdn,req_path, req_body, sesid FROM request_queue WHERE id = %s FOR UPDATE"%qid)
+                cur.execute("SELECT msisdn,req_path, req_body, sesid FROM request_queue WHERE id = %s FOR UPDATE" % qid)
                 r = cur.fetchone()
                 msisdn = r['msisdn']
                 path = r['req_path']
@@ -523,16 +523,16 @@ class RequestRun(Thread):
                 #print body
                 if not queueHandler.has_key(path):
                     cur.execute("UPDATE request_queue SET status='%s', \
-                            ldate = current_timestamp WHERE id = %s"%('failed',qid))
+                            ldate = current_timestamp WHERE id = %s" % ('failed', qid))
                     conn.commit()
                     continue
                 if not body:
                     cur.execute("UPDATE request_queue SET status='%s', \
-                            ldate = current_timestamp WHERE id = %s"%('failed',qid))
+                            ldate = current_timestamp WHERE id = %s" % ('failed', qid))
                     conn.commit()
                     continue
 
-                queueHandler.get(path)([conn,qid,body,msisdn])
+                queueHandler.get(path)([conn, qid, body, msisdn])
                 time.sleep(0.5)
                 #if req_list.qsize > 0:
                 #    self.workers_lounge.back_to_work()
@@ -561,7 +561,7 @@ class RequestProcessor(Thread):
             if con:
                 t = RequestRun(args=[con])
                 req_threads.append(t)
-            i +=1
+            i += 1
 
         for t in req_threads:
             #t.setDaemon(1)
@@ -571,7 +571,7 @@ class RequestProcessor(Thread):
             #print "qstop became one"
             qstop = 1
         try:
-            myconn = psycopg2.connect("dbname='%s' host='%s' user='%s' password='%s'"% \
+            myconn = psycopg2.connect("dbname='%s' host='%s' user='%s' password='%s'" % \
                     (cfg['dbname'],cfg['dbhost'],cfg['dbuser'],cfg['dbpass']))
         except psycopg2.OperationalError:
             myconn = None
@@ -603,5 +603,5 @@ if __name__ == '__main__':
 
     f = open('/var/log/dispatcher/dispatcher.log','a')
     logging.info("Starting WSGI Server....")
-    wsgi.server(eventlet.listen(('',9090)),app, log=f, log_format='%(client_ip)s - -[, %(date_time)s], \
+    wsgi.server(eventlet.listen(('', 9090)), app, log=f, log_format='%(client_ip)s - -[, %(date_time)s], \
             "%(request_line)s" %(status_code)s %(body_length)s %(wall_seconds).6f')

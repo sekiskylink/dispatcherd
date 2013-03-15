@@ -44,6 +44,7 @@ CREATE TABLE message_log(
         userid INTEGER REFERENCES thirdparty_users(id),
         text TEXT NOT NULL DEFAULT '',
         recipient_count INTEGER NOT NULL,
+        recipient TEXT NOT NULL DEFAULT '',
         backend TEXT NOT NULL DEFAULT '',
         cdate TIMESTAMP NOT NULL DEFAULT current_timestamp
 );
