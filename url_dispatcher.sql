@@ -14,7 +14,8 @@ CREATE TABLE request_queue(
     req_body TEXT DEFAULT '',
     sesid TEXT DEFAULT '',
     status VARCHAR(32) DEFAULT 'ready',
-    statuscode TEXT
+    statuscode TEXT,
+    remote_addr TEXT NOT NULL DEFAULT '',
 );
 
 CREATE TABLE thirdparty_users(

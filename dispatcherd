@@ -80,7 +80,8 @@ defaults = {
         'lang': 'en',
         'country_code':'256',
         'prefix_backends': {"75":"zain", "71":"dmark", "78":"dmark", "77":"dmark", "79":"dmark", "70":"dmark"},
-        'default_backend':'dmark'
+        'default_backend':'dmark',
+        'queue_outgoing': False
         }
 
 lang_strings = {}
@@ -122,6 +123,8 @@ except IOError, e:
     logging.error(e)
     # Instead use default configurations
     cfg = defaults
+
+cfg['queue_outgoing'] = bool(int(cfg['queue_outgoing']))
 
 def normalize(num):
     """return internation format of a given phone number"""
@@ -245,10 +248,6 @@ else:
     #now we're sure the connection pool is valid
     cp.put(xx)
 
-#cp2 = psycopg2.connect("dbname='etopup' host='localhost' user='postgres' password='postgres'")
-
-
-#topup_lock = threading.Lock()
 print_lock = threading.Lock()
 def sync_print(text):
     with print_lock:
@@ -322,14 +321,12 @@ def dhis2_smsinput(args=[None, 0, '', '']):
         else:
             c = ''
         url = smsinput_url + c + urlencode(d)
-        # now time to call the silly dhis2 URL
-        print url
         try:
             read_url(url)
         except:
             pass
         cur.execute("UPDATE request_queue SET status = 'completed', "
-                "ldate = current_timestamp, statuscode = '%s' WHERE id = %s"%('0200', xid))
+                "ldate = current_timestamp, statuscode = %s WHERE id = %s", ('0200', xid))
         conn.commit()
         logging.debug("%s URL successfully called [id: %s]"%('/dhis2_smsinput', xid))
     return "URL dispatched"
@@ -339,13 +336,15 @@ def queue_request(arg):
     req = arg[0]
     qstr = arg[1]
     msisdn = arg[2]
+    #data = arg[3]
+    remote_ip = arg[4]
     if qstr:
         conn = cp.get()
         cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
 
-        sql = """INSERT INTO request_queue (msisdn,req_path,req_body) \
-                VALUES('%s','%s','%s') RETURNING id""" % (msisdn, req, qstr)
-        cur.execute(sql)
+        sql = """INSERT INTO request_queue (msisdn,req_path,req_body, remote_addr) \
+                VALUES(%s, %s, %s, %s) RETURNING id"""
+        cur.execute(sql, (msisdn, req, qstr, remote_ip))
         res = cur.fetchone()
         conn.commit()
         cp.put(conn)
@@ -384,75 +383,122 @@ def handle_sms_xml(arg):
     return ""
 
 def handle_sms(arg):
-    qstr = arg[1]
+    """
+        Arguments:
+        For the Queued Requests:
+        # arg = [conn, qid, body, msisdn, remote_ip]
+
+        For the Unqueued Requests:
+        # arg = [req, qstr, msisdn, data, remote_ip]
+
+    """ 
+    if cfg['queue_outgoing']:
+        conn = arg[0]
+        xid = arg[1]
+        qstr = arg[2]
+        msisdn = arg[3]
+        remote_ip = arg[4]
+    else:
+        qstr = arg[1]
+        conn = cp.get()
+        msisdn = arg[2]
+        remote_ip = arg[4]
+
+    cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+
     if qstr:
         d = querystring_to_dict(qstr)
     else:
+        cur.execute("UPDATE request_queue SET status = 'failed', "
+                "ldate = current_timestamp, statuscode = %s WHERE id = %s", ('0400', xid))
+        conn.commit()
+        if not cfg['queue_outgoing']: cp.put(conn)
+        logging.error("Request [%s] body for /gw is empty" % xid)
         return "Failed: No CGI parameters passed"
+
     username = d.get('username', '')
     password = d.get('password', '')
     text = d.get('text', '')
-    msisdn = d.get('sender', '')
-
-    conn = cp.get()
-    cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+    #msisdn = d.get('sender', '')
 
     if username and password and text and msisdn:
         # we have all parameters and we can try to send now
         cur.execute("""SELECT id, transaction_limit, \
-						(crypt('%s',password)=password ) AS is_correct FROM \
-						thirdparty_users WHERE username='%s'""" % (password, username))
+						(crypt(%s,password)=password ) AS is_correct FROM \
+						thirdparty_users WHERE username=%s""", (password, username))
         res = cur.fetchone()
         is_valid = res['is_correct'] if res else False
         if not is_valid:
+            if cfg['queue_outgoing']:
+                cur.execute("UPDATE request_queue SET status = 'failed', "
+                        "ldate = current_timestamp, statuscode = %s WHERE id = %s", ('0401', xid))
+                conn.commit()
+            else:
+                cp.put(conn)
             return "Failed: wrong username or password"
 
         recipient = normalize(msisdn) if checknum(msisdn) else ''
         if not recipient:
+            if cfg['queue_outgoing']:
+                cur.execute("UPDATE request_queue SET status = 'failed', "
+                        "ldate = current_timestamp, statuscode = %s WHERE id = %s", ('0402', xid))
+                conn.commit()
+            else:
+                cp.put(conn)
             logging.error("Could not process request . Invalid recipient:[%s]" % msisdn)
             return "Failed: Invalid recipient"
         smsc = get_backend(recipient)
         _from = cfg.get('default_sender', '6767')
         #print "MSISDN[:%s] TEXT[:%s] SMSC[:%s] USER[:%s] PASS[:%s]" % (recipient, text, smsc, username, password)
-        sendsms(_from, [recipient], text, smsc)
+        #sendsms(_from, [recipient], text, smsc)
         logging.debug('Sent SMS [SMSC:%s] [USER:%s] [FROM:%s] [TO:%s] [MSG:%s]'%(smsc, 
             username, _from, recipient, text ))
         #log this to audit_logs
-        tup = lit(userid=res['id'], recipient_count=1, backend=smsc, text=text.replace("'","\'"), recipient=recipient)
+        tup = lit(userid=res['id'], recipient_count=1, backend=smsc, text=text, recipient=recipient)
         cur.execute("""INSERT INTO message_log(userid, text, recipient_count, backend, recipient) \
-                VALUES('%(userid)s', E'%(text)s', %(recipient_count)d, '%(backend)s', '%(recipient)s')""" % tup)
+                        VALUES(%(userid)s, %(text)s, %(recipient_count)s, %(backend)s, %(recipient)s)""", tup)
 
-        tup = lit(remote_ip='::1', audit_identity='%s'%res['id'], \
+        tup = lit(remote_ip=remote_ip, audit_identity='%s'%res['id'], \
                 action='SendSMS', detail= \
                 'Sent message from %s to %s'%(_from, recipient))
         cur.execute("""INSERT INTO audit_logs(remote_ip, audit_identity, \
-                action, detail) VALUES('%(remote_ip)s' ,'%(audit_identity)s', \
-                '%(action)s','%(detail)s')""" % tup)
+                action, detail) VALUES(%(remote_ip)s ,%(audit_identity)s, \
+                %(action)s, %(detail)s)""", tup)
         conn.commit()
 
     else:
         plist = ['username', 'password', 'sender', 'text']
         mparams = missing_param(plist, d)
+        if cfg['queue_outgoing']:
+            cur.execute("UPDATE request_queue SET status = 'failed', "
+                    "ldate = current_timestamp, statuscode = %s WHERE id = %s", ('0403', xid))
+            conn.commit()
+        else:
+            cp.put(conn)
         logging.error("Could not process request . Missing mandatory parameter(%s) " % mparams)
-        cp.put(conn)
         return "Failed: Missing Parameter"
 
-    cp.put(conn)
+    if cfg['queue_outgoing']: 
+        cur.execute("UPDATE request_queue SET status = 'completed', "
+                "ldate = current_timestamp, statuscode = '%s' WHERE id = %s"%('0200', xid))
+        conn.commit()
+    else:
+        cp.put(conn)
 
     return "Accepted"
 
 #our handler for each request
+gw_handler = queue_request if cfg['queue_outgoing'] else handle_sms
 handler = {
         "/dhis2_smsinput":queue_request,
-        #"/testing": queue_request,
         #"/gw-json": handle_sms_json,
         #"/gw": handle_sms,
-        "/gw": queue_request
+        "/gw": gw_handler
         }
 
 queueHandler = {
         "/dhis2_smsinput":dhis2_smsinput,
-        "/testing": testing
+        "/gw": handle_sms
         }
 
 #This guy handles incoming requests
@@ -463,8 +509,8 @@ def app(environ, start_response):
         strx = """Unsupported Method %s""" % \
                 (environ['REQUEST_METHOD'])
         return '\n'.join([strx])
-    print environ
-    print environ.get('CONTENT_LENGTH', '0')
+
+    #data_len = environ.get('CONTENT_LENGTH', '0')
     if method == 'POST':
         data = environ['wsgi.input'].read()
     else:
@@ -473,7 +519,6 @@ def app(environ, start_response):
     if environ.has_key('QUERY_STRING'):
         qstr = urllib2.unquote(environ['QUERY_STRING'])
     else: qstr = ""
-    #print environ
     msisdn = ""
     if qstr:
         qdict = querystring_to_dict(qstr)
@@ -482,10 +527,11 @@ def app(environ, start_response):
 
     reqp = environ['PATH_INFO']
     print "request %s" % reqp
+    remote_addr = environ['REMOTE_ADDR']
     #qstr = request body
     #pile.spawn(handler.get(environ['PATH_INFO'],do_unknown),qstr)
     if handler.has_key(reqp):
-        pile.spawn(handler.get(reqp), [reqp, qstr, msisdn, data])
+        pile.spawn(handler.get(reqp), [reqp, qstr, msisdn, data, remote_addr])
     else:
         #pile.spawn(do_unknown,reqp)
         start_response('404 Not Found', [('Content-type','text/plain')])
@@ -514,12 +560,13 @@ class RequestRun(Thread):
             try:
                 qid = req_list.get()
                 #print "gwe--- id===>",id
-                cur.execute("SELECT msisdn,req_path, req_body, sesid FROM request_queue WHERE id = %s FOR UPDATE" % qid)
+                cur.execute("SELECT msisdn,req_path, req_body, sesid, remote_addr FROM request_queue WHERE id = %s FOR UPDATE" % qid)
                 r = cur.fetchone()
                 msisdn = r['msisdn']
                 path = r['req_path']
                 body = r['req_body']
                 sesid = r['sesid']
+                remote_ip = r['remote_addr']
                 #print body
                 if not queueHandler.has_key(path):
                     cur.execute("UPDATE request_queue SET status='%s', \
@@ -532,7 +579,7 @@ class RequestRun(Thread):
                     conn.commit()
                     continue
 
-                queueHandler.get(path)([conn, qid, body, msisdn])
+                queueHandler.get(path)([conn, qid, body, msisdn, remote_ip])
                 time.sleep(0.5)
                 #if req_list.qsize > 0:
                 #    self.workers_lounge.back_to_work()
