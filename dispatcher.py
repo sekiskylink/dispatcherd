@@ -62,15 +62,15 @@ else:
 
 # Default Configurations
 defaults = {
-        'dbname':'mtrack3',
+        'dbname':'yourdb',
         'dbhost':'localhost',
-        'dbuser':'postgres',
-        'dbpass':'postgres',
+        'dbuser':'',
+        'dbpass':'',
         'dhis2_user':'dhis',
-        'dhis2_passwd': 'L2T3cuGVj',
-        'dhis2-smsinput-url':'http://mujhu.dhis2.org/sms/smsinput.action',
+        'dhis2_passwd': '',
+        'dhis2-smsinput-url':'http://<some-url>,
         'sms-sender': 'tester',
-        'send-sms-url':'http://localhost:13013/cgi-bin/sendsms?username=tester&password=foobar&smsc=fake',
+        'send-sms-url':'http://localhost:13013/cgi-bin/sendsms?username=user&password=passwd&smsc=fake',
         'queue_process_interval':5,
         'max_num_threads': 5,
         'lang': 'en',
