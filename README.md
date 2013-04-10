@@ -1,6 +1,6 @@
 URL Dispatcher
 ==============
-The URL Dispatcher is an Eventlet wsgi server, that can optionally queue its requests or serve them on the fly.
+The URL Dispatcher is an Eventlet wsgi server, that can optionally queue its requests or serve them on-the-fly.
 Queued requests are handled by worker threads, which basically run a thread function based on the type of request.
 It gets it's "URL Dispatcher" name from the fact that most of the queued request were intended to be URLs that one needs to call
 
