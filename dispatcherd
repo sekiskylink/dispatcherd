@@ -25,25 +25,26 @@ try:
     Http = httplib2.Http
 except ImportError:
     import urllib2
-    class Http(): # wrapper to use when httplib2 not available
+
+    class Http():  # wrapper to use when httplib2 not available
         def request(self, url, method, body, headers):
             f = urllib2.urlopen(urllib2.Request(url, body, headers))
             return f.info(), f.read()
 
 #from eventlet import db_pool
 import eventlet.db_pool
-from eventlet.green import socket
-import socket
+#from eventlet.green import socket
 from eventlet.green import urllib2
-from datetime import date
-from threading import Thread, Event
+from threading import Thread
 from urllib import urlencode, urlopen
 
-logging.basicConfig(level=logging.DEBUG,
-        format='%(asctime)s [%(process)d] %(levelname)-4s:  %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S',
-        filename='/var/log/dispatcher/dispatcher.log',
-        filemode='a')
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s [%(process)d] %(levelname)-4s:  %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    filename='/var/log/dispatcher/dispatcher.log',
+    filemode='a'
+)
 # First Things First
 # Lets save pid in pidfile
 PIDFILE = "/var/tmp/dispatcher.pid"
@@ -53,7 +54,7 @@ if os.path.isfile(PIDFILE):
     print "%s already exists, exiting" % PIDFILE
     pidx = file(PIDFILE, 'r').read().strip()
     if len(pidx) > 0:
-        is_runing = os.popen("ps up %s | grep -v '^USER'|awk '{print $2}'"%pidx).read().strip()
+        is_runing = os.popen("ps up %s | grep -v '^USER'|awk '{print $2}'" % pidx).read().strip()
         print is_runing
         if len(is_runing) > 0:
             print "Dispatch engine is already running..."
@@ -66,31 +67,35 @@ else:
 
 # Default Configurations
 defaults = {
-        'dbname':'db',
-        'dbhost':'localhost',
-        'dbuser':'',
-        'dbpass':'',
-        'dhis2_user':'',
-        'dhis2_passwd': '',
-        'dhis2-smsinput-url':'http://<some-url>',
-        'sms-sender': 'tester',
-        'send-sms-url':'http://localhost:13013/cgi-bin/sendsms?username=user&password=passwd',
-        'queue_process_interval':45,
-        'max_num_threads': 5,
-        'lang': 'en',
-        'country_code':'256',
-        'prefix_backends': {"75":"zain", "71":"dmark", "78":"dmark", "77":"dmark", "79":"dmark", "70":"dmark"},
-        'default_backend':'dmark',
-        'queue_outgoing': False
-        }
+    'dbname': 'db',
+    'dbhost': 'localhost',
+    'dbuser': '',
+    'dbpass': '',
+    'dhis2_user': '',
+    'dhis2_passwd': '',
+    'dhis2-smsinput-url': 'http://<some-url>',
+    'sms-sender': 'tester',
+    'send-sms-url': 'http://localhost:13013/cgi-bin/sendsms?username=user&password=passwd',
+    'queue_process_interval': 45,
+    'max_num_threads': 5,
+    'lang': 'en',
+    'country_code': '256',
+    'prefix_backends': {"75": "zain", "71": "dmark", "78": "dmark", "77": "yo", "79": "dmark", "70": "dmark"},
+    'default_backend': 'dmark',
+    'queue_outgoing': False
+}
 
 lang_strings = {}
 
 # Helpers
+
+
 def default(*args):
     p = [i for i in args if i or i == 0]
-    if p.__len__(): return p[0]
-    if args.__len__(): return args[args.__len__() - 1]
+    if p.__len__():
+        return p[0]
+    if args.__len__():
+        return args[args.__len__() - 1]
     return None
 
 
@@ -100,23 +105,24 @@ def myReadConf(fname):
     splitchar = ':'
     for l in file(fname):
         l = l.strip()
-        if not l: continue
+        if not l:
+            continue
         if l[0] == '#' or l.find(splitchar) < 0:
-            continue # a comment
+            continue  # a comment
         k, v = l.strip().split(splitchar, 1)
         if not k or not v:
-            continue # skip over bad ones
+            continue  # skip over bad ones
         cfgx[k.lower().strip()] = v.strip()
     return cfgx
 
 
 #Read configuration
 try:
-    cfg  = myReadConf('/etc/dispatcher/dispatcher.conf')
+    cfg = myReadConf('/etc/dispatcher/dispatcher.conf')
 
     #Make sure cfg has required configurations
     for ky, val in defaults.items():
-        if not cfg.has_key(ky):
+        if ky not in cfg:
             cfg[ky] = val
 except IOError, e:
     print e
@@ -126,40 +132,46 @@ except IOError, e:
 
 cfg['queue_outgoing'] = bool(int(cfg['queue_outgoing']))
 
+
 def normalize(num):
     """return internation format of a given phone number"""
-    cc = cfg.get("country_code","256")
+    cc = cfg.get("country_code", "256")
     x = '%s' % num
     if x.startswith('0'):
         x = "%s" % cc + x[1:]
         return x
-    return x.replace('+','')
+    return x.replace('+', '')
+
 
 def checknum(num):
     """Check validity of a phone number"""
     if len(num) < 9:
         return False
-    if re.match(r'(^\+)?\d{,14}$','%s' % num):
+    if re.match(r'(^\+)?\d{,14}$', '%s' % num):
         return True
     return False
+
 
 def localize(num):
     """Returns phone number in local format"""
     x = '%s' % num
-    if x.startswith('0'): return x
-    cc = cfg.get("country_code","256")
-    x = x.replace('+','')
+    if x.startswith('0'):
+        return x
+    cc = cfg.get("country_code", "256")
+    x = x.replace('+', '')
     if x.startswith(cc):
         return "0" + x[len(cc):]
 
+
 def eliminator_international(l):
-    """Given a list of phone numbers, 
+    """Given a list of phone numbers,
     returns a list in international format but with one occurance for each"""
     n = list(set(filter(checknum, l)))
     return list(set(map(normalize, n)))
 
+
 def eliminator_local(l):
-    """Given a list of phone numbers, 
+    """Given a list of phone numbers,
     returns a list in local format but with one occurance for each"""
     n = list(set(filter(checknum, l)))
     return list(set(map(localize, n)))
@@ -168,30 +180,34 @@ def eliminator_local(l):
 def is_airtel_num(num):
     """Given a number in international format,
     return True if it is an Airtel one otherwise False"""
-    cc = cfg.get("country_code","256")
+    cc = cfg.get("country_code", "256")
     if num[len(cc):].startswith("75"):
         return True
     return False
 
+
 def get_backend(num):
     """Given a phone number in international format,
     returns required backend/smsc to use for such a number"""
-    cc = cfg.get("country_code","256")
-    prefix = num[len(cc):len(cc)+2]
+    cc = cfg.get("country_code", "256")
+    prefix = num[len(cc):len(cc) + 2]
     for k, v in cfg['prefix_backends'].iteritems():
-        if prefix == k: 
+        if prefix == k:
             return v
-    return cfg.get('default_backend','fake')
+    return cfg.get('default_backend', 'fake')
+
 
 def sendsms(frm, to, msg, smsc):
-    params = {'smsc':smsc, 'from':frm, 'to': ' '.join(to), 'text':msg}
+    params = {'smsc': smsc, 'from': frm, 'to': ' '.join(to), 'text': msg}
     surl = cfg['send-sms-url']
     if surl.find('?') < 0:
         c = '?'
-    else: c = '&'
+    else:
+        c = '&'
     url = surl + c + urlencode(params)
     s = urlopen(url)
     return s.readlines()
+
 
 def querystring_to_dict(qstr):
     ret = urlparse.parse_qs(qstr)
@@ -199,26 +215,30 @@ def querystring_to_dict(qstr):
         ret[k] = ''.join(ret[k])
     return ret
 
+
 def lit(**keywords):
     return keywords
+
 
 def missing_param(param_list, params):
     s = ""
     for i in param_list:
-        if not params.has_key(i):
+        if i not in params:
             s += "%s, " % i
     return s
+
 
 def read_url(url):
     """Read passed url using Basic Authentication"""
     HTTP_METHOD = "GET"
     auth = base64.b64encode("%(dhis2_user)s:%(dhis2_passwd)s" % cfg)
     headers = {
-            'Content-type': 'text/xml; charset="UTF-8"',
-            'Authorization': 'Basic ' + auth
-            }
+        'Content-type': 'text/xml; charset="UTF-8"',
+        'Authorization': 'Basic ' + auth
+    }
     response, content = http.request(url, HTTP_METHOD, headers=headers)
     return content
+
 
 def send_data(requestXml):
     HTTP_METHOD = "POST"
@@ -226,16 +246,18 @@ def send_data(requestXml):
     print url
     auth = base64.b64encode("%(dhis2_user)s:%(dhis2_passwd)s" % cfg)
     headers = {
-            'Content-type': 'text/xml; charset="UTF-8"',
-            'Authorization': 'Basic ' + auth
-            }
+        'Content-type': 'text/xml; charset="UTF-8"',
+        'Authorization': 'Basic ' + auth
+    }
     response, content = http.request(url, HTTP_METHOD, body=requestXml, headers=headers)
     return response
 
 pool = eventlet.GreenPool()
 
-cp = eventlet.db_pool.ConnectionPool(psycopg2, host=cfg['dbhost'], user=cfg['dbuser'], \
-        password=cfg['dbpass'], database=cfg['dbname'])
+cp = eventlet.db_pool.ConnectionPool(
+    psycopg2, host=cfg['dbhost'], user=cfg['dbuser'],
+    password=cfg['dbpass'], database=cfg['dbname']
+)
 
 #Is connection pool valid?
 try:
@@ -249,12 +271,16 @@ else:
     cp.put(xx)
 
 print_lock = threading.Lock()
+
+
 def sync_print(text):
     with print_lock:
         print text
 
 # If there are any database cofigurations
 # they will overide those in conf file
+
+
 class url_dispatcher_config:
     topup_id = 0
     transfer_id = 0
@@ -282,19 +308,24 @@ import pprint
 pp = pprint.PrettyPrinter(indent=4)
 pp.pprint(cfg)
 
+
 def _rts(name=None, deftext=""):
     global lang_strings
-    if lang_strings.has_key(name):
+    if name in lang_strings:
         return default(lang_strings[name], deftext)
     return deftext
 
 # End Helpers
+
+
 def do_unknown(req):
-    strx ="""Unknown request::: %s""" % req
+    strx = """Unknown request::: %s""" % req
     return strx
+
 
 def testing(req):
     return ""
+
 
 def dhis2_smsinput(args=[None, 0, '', '']):
     conn = args[0]
@@ -302,7 +333,7 @@ def dhis2_smsinput(args=[None, 0, '', '']):
 
     xid = args[1]
     query_string = args[2]
-    msisdn = args[3]
+    # msisdn = args[3]
 
     if query_string:
         d = querystring_to_dict(query_string)
@@ -315,7 +346,7 @@ def dhis2_smsinput(args=[None, 0, '', '']):
 
     smsinput_url = cfg['dhis2-smsinput-url']
 
-    if d.has_key('sender') and d.has_key('message'):
+    if 'sender' in d and 'message' in d:
         if smsinput_url.find('?') < 0:
             c = '?'
         else:
@@ -325,11 +356,14 @@ def dhis2_smsinput(args=[None, 0, '', '']):
             read_url(url)
         except:
             pass
-        cur.execute("UPDATE request_queue SET status = 'completed', "
-                "ldate = current_timestamp, statuscode = %s WHERE id = %s", ('0200', xid))
+        cur.execute(
+            "UPDATE request_queue SET status = 'completed', "
+            "ldate = current_timestamp, statuscode = %s WHERE id = %s", ('0200', xid)
+        )
         conn.commit()
-        logging.debug("%s URL successfully called [id: %s]"%('/dhis2_smsinput', xid))
+        logging.debug("%s URL successfully called [id: %s]" % ('/dhis2_smsinput', xid))
     return "URL dispatched"
+
 
 def queue_request(arg):
     """Queue up incoming request in the database"""
@@ -342,18 +376,18 @@ def queue_request(arg):
         conn = cp.get()
         cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
 
-        sql = """INSERT INTO request_queue (msisdn,req_path,req_body, remote_addr) \
+        sql = """INSERT INTO request_queue (msisdn,req_path,req_body, remote_addr)
                 VALUES(%s, %s, %s, %s) RETURNING id"""
         cur.execute(sql, (msisdn, req, qstr, remote_ip))
         res = cur.fetchone()
         conn.commit()
         cp.put(conn)
         logging.debug("Queued %s Request from %s with id %s" % (req, msisdn, res['id']))
-        return "%s %s" % (_rts('E_REQUEST_QUEUED', \
-                'Request queued with ID'),res['id'])
+        return "%s %s" % (_rts('E_REQUEST_QUEUED', 'Request queued with ID'), res['id'])
     else:
         logging.error("%s Request from %s with no cgi variables" % (req, msisdn))
         return "Notice: No Parameters passed"
+
 
 def handle_sms_json(arg):
     data = arg[3]
@@ -379,8 +413,10 @@ def handle_sms_json(arg):
 
     return "Accepted"
 
+
 def handle_sms_xml(arg):
     return ""
+
 
 def handle_sms(arg):
     """
@@ -391,7 +427,7 @@ def handle_sms(arg):
         For the Unqueued Requests:
         # arg = [req, qstr, msisdn, data, remote_ip]
 
-    """ 
+    """
     if cfg['queue_outgoing']:
         conn = arg[0]
         xid = arg[1]
@@ -409,10 +445,12 @@ def handle_sms(arg):
     if qstr:
         d = querystring_to_dict(qstr)
     else:
-        cur.execute("UPDATE request_queue SET status = 'failed', "
-                "ldate = current_timestamp, statuscode = %s WHERE id = %s", ('0400', xid))
+        cur.execute(
+            "UPDATE request_queue SET status = 'failed', "
+            "ldate = current_timestamp, statuscode = %s WHERE id = %s", ('0400', xid))
         conn.commit()
-        if not cfg['queue_outgoing']: cp.put(conn)
+        if not cfg['queue_outgoing']:
+            cp.put(conn)
         logging.error("Request [%s] body for /gw is empty" % xid)
         return "Failed: No CGI parameters passed"
 
@@ -423,15 +461,17 @@ def handle_sms(arg):
 
     if username and password and text and msisdn:
         # we have all parameters and we can try to send now
-        cur.execute("""SELECT id, transaction_limit, \
-						(crypt(%s,password)=password ) AS is_correct FROM \
-						thirdparty_users WHERE username=%s""", (password, username))
+        cur.execute(
+            "SELECT id, transaction_limit,"
+            " (crypt(%s,password)=password ) AS is_correct FROM"
+            " thirdparty_users WHERE username=%s", (password, username))
         res = cur.fetchone()
         is_valid = res['is_correct'] if res else False
         if not is_valid:
             if cfg['queue_outgoing']:
-                cur.execute("UPDATE request_queue SET status = 'failed', "
-                        "ldate = current_timestamp, statuscode = %s WHERE id = %s", ('0401', xid))
+                cur.execute(
+                    "UPDATE request_queue SET status = 'failed', "
+                    "ldate = current_timestamp, statuscode = %s WHERE id = %s", ('0401', xid))
                 conn.commit()
             else:
                 cp.put(conn)
@@ -440,8 +480,9 @@ def handle_sms(arg):
         recipient = normalize(msisdn) if checknum(msisdn) else ''
         if not recipient:
             if cfg['queue_outgoing']:
-                cur.execute("UPDATE request_queue SET status = 'failed', "
-                        "ldate = current_timestamp, statuscode = %s WHERE id = %s", ('0402', xid))
+                cur.execute(
+                    "UPDATE request_queue SET status = 'failed', "
+                    "ldate = current_timestamp, statuscode = %s WHERE id = %s", ('0402', xid))
                 conn.commit()
             else:
                 cp.put(conn)
@@ -451,18 +492,21 @@ def handle_sms(arg):
         _from = cfg.get('default_sender', '6767')
         #print "MSISDN[:%s] TEXT[:%s] SMSC[:%s] USER[:%s] PASS[:%s]" % (recipient, text, smsc, username, password)
         #sendsms(_from, [recipient], text, smsc)
-        logging.debug('Sent SMS [SMSC:%s] [USER:%s] [FROM:%s] [TO:%s] [MSG:%s]'%(smsc, 
-            username, _from, recipient, text ))
+        logging.debug(
+            'Sent SMS [SMSC:%s] [USER:%s] [FROM:%s] [TO:%s] [MSG:%s]' %
+            (smsc, username, _from, recipient, text)
+        )
         #log this to audit_logs
         tup = lit(userid=res['id'], recipient_count=1, backend=smsc, text=text, recipient=recipient)
-        cur.execute("""INSERT INTO message_log(userid, text, recipient_count, backend, recipient) \
+        cur.execute("""INSERT INTO message_log(userid, text, recipient_count, backend, recipient)
                         VALUES(%(userid)s, %(text)s, %(recipient_count)s, %(backend)s, %(recipient)s)""", tup)
 
-        tup = lit(remote_ip=remote_ip, audit_identity='%s'%res['id'], \
-                action='SendSMS', detail= \
-                'Sent message from %s to %s'%(_from, recipient))
-        cur.execute("""INSERT INTO audit_logs(remote_ip, audit_identity, \
-                action, detail) VALUES(%(remote_ip)s ,%(audit_identity)s, \
+        tup = lit(
+            remote_ip=remote_ip, audit_identity='%s' % res['id'],
+            action='SendSMS', detail='Sent message from %s to %s' % (_from, recipient)
+        )
+        cur.execute("""INSERT INTO audit_logs(remote_ip, audit_identity,
+                action, detail) VALUES(%(remote_ip)s ,%(audit_identity)s,
                 %(action)s, %(detail)s)""", tup)
         conn.commit()
 
@@ -470,17 +514,17 @@ def handle_sms(arg):
         plist = ['username', 'password', 'sender', 'text']
         mparams = missing_param(plist, d)
         if cfg['queue_outgoing']:
-            cur.execute("UPDATE request_queue SET status = 'failed', "
-                    "ldate = current_timestamp, statuscode = %s WHERE id = %s", ('0403', xid))
+            cur.execute("""UPDATE request_queue SET status = 'failed',
+                    ldate = current_timestamp, statuscode = %s WHERE id = %s""", ('0403', xid))
             conn.commit()
         else:
             cp.put(conn)
         logging.error("Could not process request . Missing mandatory parameter(%s) " % mparams)
         return "Failed: Missing Parameter"
 
-    if cfg['queue_outgoing']: 
-        cur.execute("UPDATE request_queue SET status = 'completed', "
-                "ldate = current_timestamp, statuscode = '%s' WHERE id = %s"%('0200', xid))
+    if cfg['queue_outgoing']:
+        cur.execute("""UPDATE request_queue SET status = 'completed',
+                ldate = current_timestamp, statuscode = '%s' WHERE id = %s""" % ('0200', xid))
         conn.commit()
     else:
         cp.put(conn)
@@ -490,24 +534,25 @@ def handle_sms(arg):
 #our handler for each request
 gw_handler = queue_request if cfg['queue_outgoing'] else handle_sms
 handler = {
-        "/dhis2_smsinput":queue_request,
-        #"/gw-json": handle_sms_json,
-        #"/gw": handle_sms,
-        "/gw": gw_handler
-        }
+    "/dhis2_smsinput": queue_request,
+    #"/gw-json": handle_sms_json,
+    #"/gw": handle_sms,
+    "/gw": gw_handler
+}
 
 queueHandler = {
-        "/dhis2_smsinput":dhis2_smsinput,
-        "/gw": handle_sms
-        }
+    "/dhis2_smsinput": dhis2_smsinput,
+    "/gw": handle_sms
+}
 
 #This guy handles incoming requests
+
+
 def app(environ, start_response):
     method = environ['REQUEST_METHOD']
     if method not in ['GET', 'POST']:
-        start_response('403 Forbidden', [('Content-type','text/plain')])
-        strx = """Unsupported Method %s""" % \
-                (environ['REQUEST_METHOD'])
+        start_response('403 Forbidden', [('Content-type', 'text/plain')])
+        strx = """Unsupported Method %s""" % (environ['REQUEST_METHOD'])
         return '\n'.join([strx])
 
     #data_len = environ.get('CONTENT_LENGTH', '0')
@@ -516,13 +561,14 @@ def app(environ, start_response):
     else:
         data = ""
     pile = eventlet.GreenPile(pool)
-    if environ.has_key('QUERY_STRING'):
+    if 'QUERY_STRING' in environ:
         qstr = urllib2.unquote(environ['QUERY_STRING'])
-    else: qstr = ""
+    else:
+        qstr = ""
     msisdn = ""
     if qstr:
         qdict = querystring_to_dict(qstr)
-        if qdict.has_key('sender'):
+        if 'sender' in qdict:
             msisdn = qdict['sender']
 
     reqp = environ['PATH_INFO']
@@ -530,27 +576,29 @@ def app(environ, start_response):
     remote_addr = environ['REMOTE_ADDR']
     #qstr = request body
     #pile.spawn(handler.get(environ['PATH_INFO'],do_unknown),qstr)
-    if handler.has_key(reqp):
+    if reqp in handler:
         pile.spawn(handler.get(reqp), [reqp, qstr, msisdn, data, remote_addr])
     else:
         #pile.spawn(do_unknown,reqp)
-        start_response('404 Not Found', [('Content-type','text/plain')])
+        start_response('404 Not Found', [('Content-type', 'text/plain')])
         strx = """Unknown request: %s""" % reqp
         return '\n'.join([strx])
 
     res = '\n'.join(pile)
-    start_response('200 OK', [('Content-type','text/plain')])
+    start_response('200 OK', [('Content-type', 'text/plain')])
     return [res]
 
 req_list = Queue.Queue(10)
 req_threads = []
 qstop = 0
 
+
 class RequestRun(Thread):
     """Consumer Thread Class"""
     def __init__(self, args=[]):
         Thread.__init__(self)
         self.args = args
+
     def run(self):
         conn = self.args[0]
         cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
@@ -560,7 +608,9 @@ class RequestRun(Thread):
             try:
                 qid = req_list.get()
                 #print "gwe--- id===>",id
-                cur.execute("SELECT msisdn,req_path, req_body, sesid, remote_addr FROM request_queue WHERE id = %s FOR UPDATE" % qid)
+                cur.execute(
+                    "SELECT msisdn,req_path, req_body, sesid, remote_addr "
+                    "FROM request_queue WHERE id = %s FOR UPDATE" % qid)
                 r = cur.fetchone()
                 msisdn = r['msisdn']
                 path = r['req_path']
@@ -568,14 +618,14 @@ class RequestRun(Thread):
                 sesid = r['sesid']
                 remote_ip = r['remote_addr']
                 #print body
-                if not queueHandler.has_key(path):
-                    cur.execute("UPDATE request_queue SET status='%s', \
-                            ldate = current_timestamp WHERE id = %s" % ('failed', qid))
+                if path not in queueHandler:
+                    cur.execute("""UPDATE request_queue SET status='%s',
+                        ldate = current_timestamp WHERE id = %s""" % ('failed', qid))
                     conn.commit()
                     continue
                 if not body:
-                    cur.execute("UPDATE request_queue SET status='%s', \
-                            ldate = current_timestamp WHERE id = %s" % ('failed', qid))
+                    cur.execute("""UPDATE request_queue SET status='%s',
+                        ldate = current_timestamp WHERE id = %s""" % ('failed', qid))
                     conn.commit()
                     continue
 
@@ -590,6 +640,7 @@ class RequestRun(Thread):
                 #    sync_print("%s finished working"%self.name)
                 break
 
+
 class RequestProcessor(Thread):
     """Request Processor Class"""
     def __init__(self):
@@ -601,8 +652,10 @@ class RequestProcessor(Thread):
         i = 0
         while i < int(cfg['max_num_threads']):
             try:
-                con =  psycopg2.connect("dbname='%s' host='%s' user='%s' password='%s'"% \
-                        (cfg['dbname'],cfg['dbhost'],cfg['dbuser'],cfg['dbpass']))
+                con = psycopg2.connect(
+                    "dbname='%s' host='%s' user='%s' password='%s'" %
+                    (cfg['dbname'], cfg['dbhost'], cfg['dbuser'], cfg['dbpass'])
+                )
             except:
                 con = None
             if con:
@@ -618,8 +671,10 @@ class RequestProcessor(Thread):
             #print "qstop became one"
             qstop = 1
         try:
-            myconn = psycopg2.connect("dbname='%s' host='%s' user='%s' password='%s'" % \
-                    (cfg['dbname'],cfg['dbhost'],cfg['dbuser'],cfg['dbpass']))
+            myconn = psycopg2.connect(
+                "dbname='%s' host='%s' user='%s' password='%s'" %
+                (cfg['dbname'], cfg['dbhost'], cfg['dbuser'], cfg['dbpass'])
+            )
         except psycopg2.OperationalError:
             myconn = None
 
@@ -648,7 +703,7 @@ if __name__ == '__main__':
 
     from eventlet import wsgi
 
-    f = open('/var/log/dispatcher/dispatcher.log','a')
+    f = open('/var/log/dispatcher/dispatcher.log', 'a')
     logging.info("Starting WSGI Server....")
     wsgi.server(eventlet.listen(('', 9090)), app, log=f, log_format='%(client_ip)s - -[, %(date_time)s], \
             "%(request_line)s" %(status_code)s %(body_length)s %(wall_seconds).6f')
